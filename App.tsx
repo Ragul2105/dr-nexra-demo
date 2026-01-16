@@ -3,6 +3,7 @@ import { Logo } from './components/Logo';
 import { Button } from './components/Button';
 import { Input } from './components/Input';
 import { analyzeRetinalImage } from './services/geminiService';
+import { analyzeWithHuggingFace } from './services/huggingfaceService';
 import { AppScreen, AnalysisResult } from './types';
 
 // Icons with thin stroke width (1.5px) as per spec
@@ -105,33 +106,44 @@ const App = () => {
     if (!selectedImage) return;
 
     setIsAnalyzing(true);
-    
-    // Extract MIME type and Base64 data robustly from Data URL
-    // Format: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...
-    const matches = selectedImage.match(/^data:(.+);base64,(.+)$/);
-    
-    let mimeType = "image/jpeg"; // Default fallback
-    let base64Data = "";
 
+    // Extract MIME type and Base64 data robustly from Data URL
+    const matches = selectedImage.match(/^data:(.+);base64,(.+)$/);
+    let mimeType = "image/jpeg";
+    let base64Data = "";
     if (matches && matches.length === 3) {
-        mimeType = matches[1];
-        base64Data = matches[2];
+      mimeType = matches[1];
+      base64Data = matches[2];
     } else {
-        // Fallback for cases where standard split might have been used
-        const parts = selectedImage.split(',');
-        base64Data = parts[1] || selectedImage;
+      const parts = selectedImage.split(',');
+      base64Data = parts[1] || selectedImage;
     }
 
-    const result = await analyzeRetinalImage(base64Data, mimeType);
-    
-    setAnalysisResult({
-      finalGrade: result.grade,
-      clinicianNotes: result.notes,
-      reasoning: result.reasoning,
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      regions: result.regions || []
-    });
-    
+    try {
+      // 1. Get DR result from Hugging Face
+      const hfResult = await analyzeWithHuggingFace(base64Data, mimeType);
+      const finalGrade = hfResult.highest_probability_class;
+
+      // 2. Get AI reasoning from Gemini using the HF result as context
+      const geminiPrompt = `A diabetic retinopathy model classified this image as: ${finalGrade}.\nDetailed confidences: ${JSON.stringify(hfResult.detailed_classification)}.\nProvide a clinical reasoning and summary for this result.`;
+      const geminiResult = await analyzeRetinalImage(base64Data, mimeType, geminiPrompt);
+
+      setAnalysisResult({
+        finalGrade,
+        clinicianNotes: geminiResult.notes,
+        reasoning: geminiResult.reasoning,
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        regions: geminiResult.regions || []
+      });
+    } catch (err) {
+      setAnalysisResult({
+        finalGrade: 'Error',
+        clinicianNotes: 'Failed to analyze image.',
+        reasoning: String(err),
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        regions: []
+      });
+    }
     setIsAnalyzing(false);
     setScreen(AppScreen.REPORT);
   };

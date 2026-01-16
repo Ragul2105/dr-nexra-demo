@@ -9,14 +9,18 @@ const getGeminiClient = () => {
   return new GoogleGenAI({ apiKey });
 };
 
-export const analyzeRetinalImage = async (base64Image: string, mimeType: string): Promise<{ grade: string; reasoning: string; notes: string; regions: Array<{label: string, ymin: number, xmin: number, ymax: number, xmax: number}> }> => {
+export const analyzeRetinalImage = async (
+  base64Image: string,
+  mimeType: string,
+  customPrompt?: string
+): Promise<{ grade: string; reasoning: string; notes: string; regions: Array<{label: string, ymin: number, xmin: number, ymax: number, xmax: number}> }> => {
   try {
     const ai = getGeminiClient();
     
     // Using gemini-3-flash-preview for multimodal capabilities
     const modelId = "gemini-3-flash-preview"; 
 
-    const prompt = `
+    const prompt = customPrompt || `
       You are an expert ophthalmologist AI assistant named NexEye. 
       Analyze the provided retinal image. 
       Identify potential issues, focusing on Diabetic Retinopathy (DR) signs like microaneurysms, hemorrhages, hard exudates, or cotton wool spots.
