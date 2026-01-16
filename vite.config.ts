@@ -8,6 +8,10 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        allowedHosts: [
+          'monkfish-app-5q5jk.ondigitalocean.app',
+          '.ondigitalocean.app'
+        ]
       },
       plugins: [react()],
       define: {
