@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NexEye AI Diagnostics</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              nexthria: {
+                bg: '#0B0F19',        // App_Background
+                card: '#161B28',      // Card_Surface
+                input: '#1F2937',     // Input_Fill
+                cyan: '#22D3EE',      // Top Gradient
+                blue: '#3B82F6',      // Mid Gradient
+                indigo: '#4F46E5',    // Bottom Gradient
+                text: {
+                  primary: '#FFFFFF',
+                  secondary: '#94A3B8', // Slate-400
+                  tertiary: '#64748B',  // Slate-500
+                }
+              }
+            },
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+            },
+            animation: {
+              'fade-in': 'fadeIn 0.6s ease-out forwards',
+              'pulse-glow': 'pulseGlow 4s ease-in-out infinite',
+              'spin-slow': 'spinSlow 12s linear infinite',
+            },
+            keyframes: {
+              fadeIn: {
+                '0%': { opacity: '0', transform: 'translateY(10px)' },
+                '100%': { opacity: '1', transform: 'translateY(0)' },
+              },
+              pulseGlow: {
+                '0%, 100%': { opacity: '1', filter: 'drop-shadow(0 0 15px rgba(34, 211, 238, 0.3))' },
+                '50%': { opacity: '0.9', filter: 'drop-shadow(0 0 25px rgba(34, 211, 238, 0.5))' },
+              },
+              spinSlow: {
+                '0%': { transform: 'translate(50px, 50px) rotate(45deg)' },
+                '100%': { transform: 'translate(50px, 50px) rotate(405deg)' },
+              }
+            }
+          },
+        },
+      }
+    </script>
+    <style>
+      body {
+        background-color: #0B0F19;
+        color: #FFFFFF;
+        font-family: 'Inter', sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      /* Glassmorphism Utilities */
+      .glass-card {
+        background: rgba(30, 41, 59, 0.7);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.35.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>

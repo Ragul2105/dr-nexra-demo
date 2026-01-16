@@ -1,0 +1,7 @@
+{
+  "name": "NexEye AI Diagnostics",
+  "description": "MVP for an AI-powered retinal diagnostic tool helping clinicians identify conditions like Diabetic Retinopathy.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
