@@ -4,7 +4,10 @@ import { Button } from './components/Button';
 import { Input } from './components/Input';
 import { analyzeRetinalImage } from './services/geminiService';
 import { analyzeWithHuggingFace } from './services/huggingfaceService';
-import { AppScreen, AnalysisResult } from './types';
+import { loginWithEmail, loginWithGoogle, logout, onAuthStateChange } from './services/authService';
+import { addPatient, getPatients, subscribeToPatients, addScanToPatient, getUserProfile, saveUserProfile, subscribeToUserProfile } from './services/firestoreService';
+import { AppScreen, AnalysisResult, Patient, UserProfile } from './types';
+import type { User } from 'firebase/auth';
 
 // Icons with thin stroke width (1.5px) as per spec
 const EmailIcon = () => (
@@ -62,10 +65,36 @@ const App = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isTermsAccepted, setIsTermsAccepted] = useState(false);
   const [showHeatmap, setShowHeatmap] = useState(false);
-  const [profileTab, setProfileTab] = useState<'scans' | 'vitals' | 'history'>('vitals');
+  const [profileTab, setProfileTab] = useState<'scans' | 'vitals' | 'history'>('scans');
+  const [user, setUser] = useState<User | null>(null);
+  const [authError, setAuthError] = useState<string>('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Patient Management
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [patientForm, setPatientForm] = useState({
+    name: '',
+    id: '',
+    age: '',
+    gender: 'Male' as 'Male' | 'Female' | 'Other',
+    admittedDate: new Date().toISOString().split('T')[0]
+  });
+
+  // User Profile & Settings
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'settings'>('dashboard');
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    age: '',
+    gender: 'Male' as 'Male' | 'Female' | 'Other',
+    specialization: ''
+  });
 
   // Splash Screen Effect
   useEffect(() => {
@@ -77,11 +106,153 @@ const App = () => {
     }
   }, [screen]);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (isTermsAccepted) {
-      setScreen(AppScreen.DASHBOARD);
+  // Auth State Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChange((currentUser) => {
+      setUser(currentUser);
+      if (currentUser && screen === AppScreen.LOGIN) {
+        setScreen(AppScreen.DASHBOARD);
+      }
+    });
+    return () => unsubscribe();
+  }, [screen]);
+
+  // Load patients from Firestore and set up real-time listener
+  useEffect(() => {
+    if (!user) {
+      setPatients([]);
+      return;
     }
+
+    // Set up real-time listener for patients
+    const unsubscribe = subscribeToPatients(user.uid, (updatedPatients) => {
+      setPatients(updatedPatients);
+      
+      // Update selectedPatient if it's in the updated list
+      if (selectedPatient) {
+        const updated = updatedPatients.find(p => p.id === selectedPatient.id);
+        if (updated) {
+          setSelectedPatient(updated);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Load user profile from Firestore and set up real-time listener
+  useEffect(() => {
+    if (!user) {
+      setUserProfile(null);
+      return;
+    }
+
+    // Set up real-time listener for user profile
+    const unsubscribe = subscribeToUserProfile(user.uid, (profile) => {
+      if (profile) {
+        setUserProfile(profile);
+        setProfileForm({
+          name: profile.name || '',
+          age: profile.age?.toString() || '',
+          gender: profile.gender || 'Male',
+          specialization: profile.specialization || ''
+        });
+      } else {
+        // Create default profile if doesn't exist
+        const defaultProfile: UserProfile = {
+          uid: user.uid,
+          name: user.displayName || '',
+          age: 0,
+          gender: 'Male',
+          specialization: '',
+          email: user.email || ''
+        };
+        setUserProfile(defaultProfile);
+        saveUserProfile(defaultProfile);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    try {
+      setAuthError('');
+      await loginWithEmail(email, password);
+      // Auth state listener will handle navigation
+    } catch (error: any) {
+      setAuthError(error.message || 'Failed to sign in');
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    try {
+      setAuthError('');
+      await loginWithGoogle();
+      // Auth state listener will handle navigation
+    } catch (error: any) {
+      setAuthError(error.message || 'Failed to sign in with Google');
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      setScreen(AppScreen.LOGIN);
+    } catch (error: any) {
+      console.error('Logout error:', error);
+    }
+  };
+
+  const handleAddPatient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!user) return;
+    
+    const newPatient: Patient = {
+      id: patientForm.id,
+      name: patientForm.name,
+      age: parseInt(patientForm.age),
+      gender: patientForm.gender,
+      admittedDate: patientForm.admittedDate,
+      scans: []
+    };
+    
+    try {
+      // Save to Firestore
+      await addPatient(user.uid, newPatient);
+      
+      // Reset form and navigate
+      setPatientForm({
+        name: '',
+        id: '',
+        age: '',
+        gender: 'Male',
+        admittedDate: new Date().toISOString().split('T')[0]
+      });
+      setActiveTab('patients');
+      setScreen(AppScreen.PATIENTS);
+    } catch (error) {
+      console.error('Error adding patient:', error);
+      alert('Failed to add patient. Please try again.');
+    }
+  };
+
+  const handleSelectPatient = (patient: Patient) => {
+    setSelectedPatient(patient);
+    setScreen(AppScreen.PATIENT_PROFILE);
+    setProfileTab('scans');
+  };
+
+  const handleAddPatientFromSearch = () => {
+    setPatientForm({
+      ...patientForm,
+      name: searchQuery,
+    });
+    setSearchQuery('');
+    setScreen(AppScreen.ADD_PATIENT);
   };
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -128,21 +299,34 @@ const App = () => {
       const geminiPrompt = `A diabetic retinopathy model classified this image as: ${finalGrade}.\nDetailed confidences: ${JSON.stringify(hfResult.detailed_classification)}.\nProvide a clinical reasoning and summary for this result.`;
       const geminiResult = await analyzeRetinalImage(base64Data, mimeType, geminiPrompt);
 
-      setAnalysisResult({
+      const result: AnalysisResult = {
         finalGrade,
         clinicianNotes: geminiResult.notes,
         reasoning: geminiResult.reasoning,
         date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         regions: geminiResult.regions || []
-      });
+      };
+      
+      setAnalysisResult(result);
+      
+      // Save scan to selected patient in Firestore
+      if (selectedPatient && user) {
+        try {
+          await addScanToPatient(user.uid, selectedPatient.id, result);
+          // Real-time listener will update the local state
+        } catch (error) {
+          console.error('Error saving scan:', error);
+        }
+      }
     } catch (err) {
-      setAnalysisResult({
+      const errorResult: AnalysisResult = {
         finalGrade: 'Error',
         clinicianNotes: 'Failed to analyze image.',
         reasoning: String(err),
         date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         regions: []
-      });
+      };
+      setAnalysisResult(errorResult);
     }
     setIsAnalyzing(false);
     setScreen(AppScreen.REPORT);
@@ -176,34 +360,33 @@ const App = () => {
       </div>
 
       <form onSubmit={handleLogin} className="flex flex-col gap-5 w-full z-10">
-        <Input icon={<EmailIcon />} placeholder="Email Address" type="email" required />
-        <Input icon={<LockIcon />} placeholder="Password" type="password" required />
+        {authError && (
+          <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            {authError}
+          </div>
+        )}
+        <Input 
+          icon={<EmailIcon />} 
+          placeholder="Email Address" 
+          type="email" 
+          required 
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <Input 
+          icon={<LockIcon />} 
+          placeholder="Password" 
+          type="password" 
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
         
         <div className="flex justify-end">
           <button type="button" className="text-sm text-nexthria-cyan hover:text-white transition-colors font-medium">Forgot Password?</button>
         </div>
 
-        <div className="flex items-start gap-3 my-1">
-            <div className="relative flex items-center pt-0.5">
-            <input 
-                type="checkbox" 
-                id="terms"
-                checked={isTermsAccepted}
-                onChange={(e) => setIsTermsAccepted(e.target.checked)}
-                className="peer h-5 w-5 cursor-pointer appearance-none rounded-md border border-slate-600 bg-[#1F2937] transition-all checked:border-nexthria-cyan checked:bg-nexthria-cyan hover:border-nexthria-cyan/50 focus:ring-2 focus:ring-nexthria-cyan/20"
-            />
-            <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 mt-0.5 text-[#0B0F19] opacity-0 transition-opacity peer-checked:opacity-100">
-                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-            </div>
-            </div>
-            <label htmlFor="terms" className="text-xs text-nexthria-text-secondary leading-tight cursor-pointer select-none">
-            I agree to the <a href="#" className="text-nexthria-blue hover:text-nexthria-cyan transition-colors font-medium">Terms</a> & <a href="#" className="text-nexthria-blue hover:text-nexthria-cyan transition-colors font-medium">Data Privacy Policy</a> for processing biometric data.
-            </label>
-        </div>
-
-        <Button type="submit" className="mt-2" disabled={!isTermsAccepted}>Sign In</Button>
+        <Button type="submit" className="mt-2">Sign In</Button>
       </form>
 
       <div className="mt-6 flex flex-col items-center gap-6 z-10">
@@ -215,10 +398,15 @@ const App = () => {
         <Button 
           variant="outline" 
           fullWidth 
-          onClick={(e) => { e.preventDefault(); if(isTermsAccepted) setScreen(AppScreen.DASHBOARD); }}
-          disabled={!isTermsAccepted}
+          onClick={(e) => { e.preventDefault(); handleGoogleLogin(); }}
         >
-          Hospital SSO Provider
+          <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
+            <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+            <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+            <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+            <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+          </svg>
+          Continue with Google
         </Button>
       </div>
 
@@ -228,79 +416,306 @@ const App = () => {
     </div>
   );
 
-  const renderDashboard = () => (
+  const renderAddPatient = () => (
+    <div className="flex flex-col h-full px-6 py-6 animate-fade-in max-w-md mx-auto w-full relative">
+      <div className="relative flex items-center justify-center mb-8">
+        <button 
+          onClick={() => { setActiveTab('patients'); setScreen(AppScreen.PATIENTS); }}
+          className="absolute left-0 p-2 text-nexthria-text-secondary hover:text-white transition-colors"
+        >
+          <BackIcon />
+        </button>
+        <h2 className="text-xl font-bold text-white">Add New Patient</h2>
+      </div>
+
+      <form onSubmit={handleAddPatient} className="flex flex-col gap-5 flex-1">
+        <Input 
+          placeholder="Patient Name" 
+          type="text" 
+          required 
+          value={patientForm.name}
+          onChange={(e) => setPatientForm({...patientForm, name: e.target.value})}
+        />
+        
+        <Input 
+          placeholder="Patient ID" 
+          type="text" 
+          required 
+          value={patientForm.id}
+          onChange={(e) => setPatientForm({...patientForm, id: e.target.value})}
+        />
+        
+        <Input 
+          placeholder="Age" 
+          type="number" 
+          required 
+          value={patientForm.age}
+          onChange={(e) => setPatientForm({...patientForm, age: e.target.value})}
+        />
+        
+        <div className="relative">
+          <select
+            value={patientForm.gender}
+            onChange={(e) => setPatientForm({...patientForm, gender: e.target.value as 'Male' | 'Female' | 'Other'})}
+            className="w-full bg-[#1F2937] border border-transparent rounded-2xl py-4 px-5 text-white text-[15px] font-medium focus:outline-none focus:bg-[#263345] focus:border-nexthria-cyan/30 focus:ring-2 focus:ring-nexthria-cyan/10 transition-all duration-300"
+          >
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        
+        <div className="relative">
+          <label className="block text-nexthria-text-secondary text-sm mb-2">Admitted Date</label>
+          <Input 
+            type="date" 
+            required 
+            value={patientForm.admittedDate}
+            onChange={(e) => setPatientForm({...patientForm, admittedDate: e.target.value})}
+          />
+        </div>
+
+        <Button type="submit" className="mt-auto">Add Patient</Button>
+      </form>
+    </div>
+  );
+
+  // Helper function to navigate between main sections
+  const navigateToTab = (tab: 'dashboard' | 'patients' | 'settings') => {
+    setActiveTab(tab);
+    if (tab === 'dashboard') setScreen(AppScreen.DASHBOARD);
+    else if (tab === 'patients') setScreen(AppScreen.PATIENTS);
+    else if (tab === 'settings') setScreen(AppScreen.SETTINGS);
+  };
+
+  const renderDashboard = () => {
+    // Calculate statistics
+    const totalPatients = patients.length;
+    const totalScans = patients.reduce((sum, p) => sum + (p.scans?.length || 0), 0);
+    const recentScans = patients
+      .flatMap(p => (p.scans || []).map(s => ({ ...s, patientName: p.name, patientId: p.id })))
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 5);
+    
+    // Count by severity
+    const severityCounts = patients.reduce((acc, p) => {
+      const latestScan = p.scans && p.scans.length > 0 ? p.scans[p.scans.length - 1] : null;
+      if (latestScan?.finalGrade.includes('No DR') || latestScan?.finalGrade.includes('No Anomalies')) acc.normal++;
+      else if (latestScan?.finalGrade.includes('Mild')) acc.mild++;
+      else if (latestScan?.finalGrade.includes('Moderate')) acc.moderate++;
+      else if (latestScan?.finalGrade.includes('Severe') || latestScan?.finalGrade.includes('Proliferative')) acc.severe++;
+      return acc;
+    }, { normal: 0, mild: 0, moderate: 0, severe: 0 });
+
+    const userInitials = userProfile?.name ? userProfile.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'DR';
+
+    return (
+    <div className="flex flex-col h-full animate-fade-in relative bg-nexthria-bg w-full max-w-md mx-auto">
+      {/* Header */}
+      <div className="px-6 pt-12 pb-4 flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-white">Dashboard</h2>
+            <p className="text-nexthria-text-secondary text-sm">Welcome back, {userProfile?.name || 'Doctor'}</p>
+          </div>
+          <button 
+            onClick={() => setScreen(AppScreen.PROFILE)}
+            className="w-12 h-12 rounded-full bg-gradient-to-br from-pink-500 to-rose-500 p-[2px] hover:scale-105 transition-transform"
+          >
+             <div className="w-full h-full rounded-full bg-[#1F2937] flex items-center justify-center">
+              <span className="font-bold text-sm text-white">{userInitials}</span>
+             </div>
+          </button>
+        </div>
+      </div>
+
+      {/* Stats Grid */}
+      <div className="px-6 mb-6 grid grid-cols-2 gap-4">
+        <div className="glass-card p-5 rounded-2xl">
+          <div className="text-3xl font-bold text-white mb-1">{totalPatients}</div>
+          <div className="text-nexthria-text-secondary text-sm">Total Patients</div>
+        </div>
+        <div className="glass-card p-5 rounded-2xl">
+          <div className="text-3xl font-bold text-nexthria-cyan mb-1">{totalScans}</div>
+          <div className="text-nexthria-text-secondary text-sm">Total Scans</div>
+        </div>
+      </div>
+
+      {/* Severity Distribution */}
+      <div className="px-6 mb-6">
+        <h3 className="text-white font-semibold mb-4">Patient Status</h3>
+        <div className="glass-card p-5 rounded-2xl flex flex-col gap-3">
+          <div className="flex justify-between items-center">
+            <span className="text-emerald-400 text-sm">Normal</span>
+            <span className="text-white font-semibold">{severityCounts.normal}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-yellow-400 text-sm">Mild DR</span>
+            <span className="text-white font-semibold">{severityCounts.mild}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-orange-400 text-sm">Moderate DR</span>
+            <span className="text-white font-semibold">{severityCounts.moderate}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-red-400 text-sm">Severe DR</span>
+            <span className="text-white font-semibold">{severityCounts.severe}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Recent Scans */}
+      <div className="flex-1 overflow-y-auto px-6 pb-24">
+        <h3 className="text-white font-semibold mb-4">Recent Scans</h3>
+        {recentScans.length === 0 ? (
+          <div className="glass-card p-8 rounded-2xl text-center text-nexthria-text-tertiary">
+            <p>No scans yet</p>
+            <p className="text-xs mt-2">Add patients and upload scans to see them here</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {recentScans.map((scan, idx) => (
+              <div key={idx} className="glass-card p-4 rounded-2xl">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <p className="text-white font-medium">{scan.patientName}</p>
+                    <p className="text-nexthria-text-tertiary text-xs">ID: {scan.patientId}</p>
+                  </div>
+                  <span className="text-nexthria-text-secondary text-xs">{scan.date}</span>
+                </div>
+                <div className="text-nexthria-cyan text-sm font-semibold">{scan.finalGrade}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Bottom Nav */}
+      <div className="absolute bottom-0 w-full h-[80px] bg-[#0B0F19]/90 backdrop-blur-xl border-t border-white/5 flex items-start justify-around pt-4 z-40">
+        <button onClick={() => navigateToTab('dashboard')} className="flex flex-col items-center gap-1 group">
+          <div className="text-nexthria-cyan"><HomeIcon /></div>
+          <span className="text-[10px] font-medium text-nexthria-cyan">Dashboard</span>
+        </button>
+        <button onClick={() => navigateToTab('patients')} className="flex flex-col items-center gap-1 group">
+          <div className="text-nexthria-text-tertiary group-hover:text-white transition-colors"><UsersIcon /></div>
+          <span className="text-[10px] font-medium text-nexthria-text-tertiary group-hover:text-white transition-colors">Patients</span>
+        </button>
+        <button onClick={() => navigateToTab('settings')} className="flex flex-col items-center gap-1 group">
+          <div className="text-nexthria-text-tertiary group-hover:text-white transition-colors"><SettingsIcon /></div>
+          <span className="text-[10px] font-medium text-nexthria-text-tertiary group-hover:text-white transition-colors">Settings</span>
+        </button>
+      </div>
+    </div>
+    );
+  };
+
+  const renderPatients = () => {
+    // Filter patients based on search query
+    const filteredPatients = patients.filter(patient => {
+      const query = searchQuery.toLowerCase().trim();
+      if (!query) return true;
+      
+      return (
+        patient.name.toLowerCase().includes(query) ||
+        patient.id.toLowerCase().includes(query) ||
+        patient.admittedDate.includes(query) ||
+        patient.age.toString().includes(query) ||
+        patient.gender.toLowerCase().includes(query)
+      );
+    });
+
+    const getStatusColor = (grade?: string) => {
+      if (!grade) return 'bg-slate-500/10 border-slate-500/20 text-slate-400';
+      if (grade.includes('No DR') || grade.includes('No Anomalies')) 
+        return 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400';
+      if (grade.includes('Mild')) 
+        return 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400';
+      if (grade.includes('Moderate')) 
+        return 'bg-orange-500/10 border-orange-500/20 text-orange-400';
+      if (grade.includes('Severe') || grade.includes('Proliferative')) 
+        return 'bg-red-500/10 border-red-500/20 text-red-400';
+      return 'bg-slate-500/10 border-slate-500/20 text-slate-400';
+    };
+
+    const userInitials = userProfile?.name ? userProfile.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'DR';
+
+    return (
     <div className="flex flex-col h-full animate-fade-in relative bg-nexthria-bg w-full max-w-md mx-auto">
       {/* Header & Search */}
       <div className="px-6 pt-12 pb-4 flex flex-col gap-6 z-10 bg-nexthria-bg/80 backdrop-blur-md sticky top-0">
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold text-white">Patient List</h2>
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-nexthria-cyan to-nexthria-indigo p-[2px]">
-             <div className="w-full h-full rounded-full bg-nexthria-card flex items-center justify-center font-bold text-sm">DR</div>
-          </div>
+          <button 
+            onClick={() => setScreen(AppScreen.PROFILE)}
+            className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-500 to-rose-500 p-[2px]"
+          >
+             <div className="w-full h-full rounded-full bg-[#1F2937] flex items-center justify-center font-bold text-sm">{userInitials}</div>
+          </button>
         </div>
         <Input 
           icon={<SearchIcon />} 
           placeholder="Search name, ID, or DoB" 
           className="shadow-lg"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
         />
       </div>
 
       {/* Scrollable List */}
       <div className="flex-1 overflow-y-auto px-6 pb-24 flex flex-col gap-4">
-        
-        {/* Card 1 - Sarah Jenkins - Clickable to Profile */}
-        <div 
-            onClick={() => { setScreen(AppScreen.PATIENT_PROFILE); setProfileTab('vitals'); }}
-            className="glass-card p-5 rounded-2xl flex items-center justify-between group hover:bg-white/5 transition-colors cursor-pointer"
-        >
-          <div>
-            <h3 className="text-white font-semibold text-lg">Sarah Jenkins</h3>
-            <p className="text-nexthria-text-secondary text-sm">ID: P-9921</p>
-            <p className="text-nexthria-text-tertiary text-xs mt-1">Today, 9:41 AM</p>
+        {patients.length === 0 && !searchQuery ? (
+          <div className="flex flex-col items-center justify-center h-40 text-nexthria-text-tertiary">
+            <p>No patients added yet</p>
+            <p className="text-xs mt-2">Click the + button to add a patient</p>
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <span className="px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 text-[11px] font-semibold tracking-wide">
-              High Risk
-            </span>
-            <ChevronRightIcon />
+        ) : filteredPatients.length === 0 && searchQuery ? (
+          <div className="flex flex-col items-center justify-center h-40 gap-4 animate-fade-in">
+            <div className="text-nexthria-text-tertiary text-center">
+              <p className="text-white font-medium mb-1">No patients found</p>
+              <p className="text-sm">No results for "{searchQuery}"</p>
+            </div>
+            <button
+              onClick={handleAddPatientFromSearch}
+              className="flex items-center gap-2 px-6 py-3 bg-nexthria-cyan/10 border border-nexthria-cyan/30 rounded-xl text-nexthria-cyan hover:bg-nexthria-cyan/20 transition-all duration-300 font-medium"
+            >
+              <PlusIcon />
+              Add "{searchQuery}" as new patient
+            </button>
           </div>
-        </div>
+        ) : (
+          filteredPatients.map((patient) => {
+            const latestScan = patient.scans && patient.scans.length > 0 
+              ? patient.scans[patient.scans.length - 1] 
+              : null;
 
-        {/* Card 2 */}
-        <div className="glass-card p-5 rounded-2xl flex items-center justify-between group hover:bg-white/5 transition-colors cursor-pointer">
-          <div>
-            <h3 className="text-white font-semibold text-lg">Michael Chen</h3>
-            <p className="text-nexthria-text-secondary text-sm">ID: P-8820</p>
-            <p className="text-nexthria-text-tertiary text-xs mt-1">Yesterday</p>
-          </div>
-          <div className="flex flex-col items-end gap-2">
-            <span className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-semibold tracking-wide">
-              Mild DR
-            </span>
-            <ChevronRightIcon />
-          </div>
-        </div>
-
-        {/* Card 3 */}
-        <div className="glass-card p-5 rounded-2xl flex items-center justify-between group hover:bg-white/5 transition-colors cursor-pointer">
-          <div>
-            <h3 className="text-white font-semibold text-lg">Aisha Binti</h3>
-            <p className="text-nexthria-text-secondary text-sm">ID: P-7712</p>
-            <p className="text-nexthria-text-tertiary text-xs mt-1">2 days ago</p>
-          </div>
-          <div className="flex flex-col items-end gap-2">
-            <span className="px-3 py-1 rounded-full bg-slate-500/10 border border-slate-500/20 text-slate-400 text-[11px] font-semibold tracking-wide">
-              No Anomalies
-            </span>
-            <ChevronRightIcon />
-          </div>
-        </div>
-
+            return (
+              <div 
+                key={patient.id}
+                onClick={() => handleSelectPatient(patient)}
+                className="glass-card p-5 rounded-2xl flex items-center justify-between group hover:bg-white/5 transition-colors cursor-pointer"
+              >
+                <div>
+                  <h3 className="text-white font-semibold text-lg">{patient.name}</h3>
+                  <p className="text-nexthria-text-secondary text-sm">ID: {patient.id}</p>
+                  <p className="text-nexthria-text-tertiary text-xs mt-1">
+                    {patient.age} • {patient.gender} • Admitted: {new Date(patient.admittedDate).toLocaleDateString()}
+                  </p>
+                </div>
+                <div className="flex flex-col items-end gap-2">
+                  <span className={`px-3 py-1 rounded-full text-[11px] font-semibold tracking-wide ${getStatusColor(latestScan?.finalGrade)}`}>
+                    {latestScan?.finalGrade || 'No Scans'}
+                  </span>
+                  <ChevronRightIcon />
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
 
       {/* FAB */}
       <button 
-        onClick={() => setScreen(AppScreen.UPLOAD)}
+        onClick={() => setScreen(AppScreen.ADD_PATIENT)}
         className="absolute bottom-24 right-6 w-14 h-14 rounded-full bg-gradient-to-r from-nexthria-cyan to-nexthria-blue shadow-[0_0_20px_rgba(34,211,238,0.4)] flex items-center justify-center hover:scale-105 active:scale-95 transition-all duration-300 z-30"
       >
         <PlusIcon />
@@ -308,23 +723,275 @@ const App = () => {
 
       {/* Bottom Nav */}
       <div className="absolute bottom-0 w-full h-[80px] bg-[#0B0F19]/90 backdrop-blur-xl border-t border-white/5 flex items-start justify-around pt-4 z-40">
-        <button className="flex flex-col items-center gap-1 group">
-          <div className="text-nexthria-cyan"><HomeIcon /></div>
-          <span className="text-[10px] font-medium text-nexthria-cyan">Dashboard</span>
+        <button onClick={() => navigateToTab('dashboard')} className="flex flex-col items-center gap-1 group">
+          <div className="text-nexthria-text-tertiary group-hover:text-white transition-colors"><HomeIcon /></div>
+          <span className="text-[10px] font-medium text-nexthria-text-tertiary group-hover:text-white transition-colors">Dashboard</span>
         </button>
-        <button className="flex flex-col items-center gap-1 group">
-          <div className="text-nexthria-text-tertiary group-hover:text-white transition-colors"><UsersIcon /></div>
-          <span className="text-[10px] font-medium text-nexthria-text-tertiary group-hover:text-white transition-colors">Patients</span>
+        <button onClick={() => navigateToTab('patients')} className="flex flex-col items-center gap-1 group">
+          <div className="text-nexthria-cyan"><UsersIcon /></div>
+          <span className="text-[10px] font-medium text-nexthria-cyan">Patients</span>
         </button>
-        <button className="flex flex-col items-center gap-1 group">
+        <button onClick={() => navigateToTab('settings')} className="flex flex-col items-center gap-1 group">
           <div className="text-nexthria-text-tertiary group-hover:text-white transition-colors"><SettingsIcon /></div>
           <span className="text-[10px] font-medium text-nexthria-text-tertiary group-hover:text-white transition-colors">Settings</span>
         </button>
       </div>
     </div>
-  );
+    );
+  };
 
-  const renderPatientProfile = () => (
+  const renderSettings = () => {
+    const userInitials = userProfile?.name ? userProfile.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'DR';
+
+    return (
+    <div className="flex flex-col h-full animate-fade-in relative bg-nexthria-bg w-full max-w-md mx-auto">
+      {/* Header */}
+      <div className="px-6 pt-12 pb-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-white">Settings</h2>
+          <button 
+            onClick={() => setScreen(AppScreen.PROFILE)}
+            className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-500 to-rose-500 p-[2px]"
+          >
+             <div className="w-full h-full rounded-full bg-[#1F2937] flex items-center justify-center font-bold text-sm">{userInitials}</div>
+          </button>
+        </div>
+      </div>
+
+      {/* Settings List */}
+      <div className="flex-1 overflow-y-auto px-6 pb-24">
+        <div className="flex flex-col gap-4">
+          {/* Theme Toggle */}
+          <div className="glass-card p-5 rounded-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="text-nexthria-cyan">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-white font-medium">Dark Mode</p>
+                  <p className="text-nexthria-text-tertiary text-xs">Currently enabled</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className={`relative w-12 h-6 rounded-full transition-colors ${theme === 'dark' ? 'bg-nexthria-cyan' : 'bg-gray-600'}`}
+              >
+                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${theme === 'dark' ? 'right-1' : 'left-1'}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* Profile Settings */}
+          <button
+            onClick={() => setScreen(AppScreen.PROFILE)}
+            className="glass-card p-5 rounded-2xl flex items-center justify-between hover:bg-white/5 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <div className="text-nexthria-cyan">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+              <div className="text-left">
+                <p className="text-white font-medium">Profile Settings</p>
+                <p className="text-nexthria-text-tertiary text-xs">Update your information</p>
+              </div>
+            </div>
+            <ChevronRightIcon />
+          </button>
+
+          {/* Notifications */}
+          <div className="glass-card p-5 rounded-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="text-nexthria-cyan">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-white font-medium">Notifications</p>
+                  <p className="text-nexthria-text-tertiary text-xs">Push notifications</p>
+                </div>
+              </div>
+              <button className="relative w-12 h-6 rounded-full bg-gray-600">
+                <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-white" />
+              </button>
+            </div>
+          </div>
+
+          {/* About */}
+          <div className="glass-card p-5 rounded-2xl">
+            <div className="flex items-center gap-3">
+              <div className="text-nexthria-cyan">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-white font-medium">About</p>
+                <p className="text-nexthria-text-tertiary text-xs">Version 1.0.0</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Logout */}
+          <button
+            onClick={handleLogout}
+            className="glass-card p-5 rounded-2xl flex items-center gap-3 hover:bg-red-500/10 transition-colors border border-red-500/20"
+          >
+            <div className="text-red-400">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </div>
+            <p className="text-red-400 font-medium">Logout</p>
+          </button>
+        </div>
+      </div>
+
+      {/* Bottom Nav */}
+      <div className="absolute bottom-0 w-full h-[80px] bg-[#0B0F19]/90 backdrop-blur-xl border-t border-white/5 flex items-start justify-around pt-4 z-40">
+        <button onClick={() => navigateToTab('dashboard')} className="flex flex-col items-center gap-1 group">
+          <div className="text-nexthria-text-tertiary group-hover:text-white transition-colors"><HomeIcon /></div>
+          <span className="text-[10px] font-medium text-nexthria-text-tertiary group-hover:text-white transition-colors">Dashboard</span>
+        </button>
+        <button onClick={() => navigateToTab('patients')} className="flex flex-col items-center gap-1 group">
+          <div className="text-nexthria-text-tertiary group-hover:text-white transition-colors"><UsersIcon /></div>
+          <span className="text-[10px] font-medium text-nexthria-text-tertiary group-hover:text-white transition-colors">Patients</span>
+        </button>
+        <button onClick={() => navigateToTab('settings')} className="flex flex-col items-center gap-1 group">
+          <div className="text-nexthria-cyan"><SettingsIcon /></div>
+          <span className="text-[10px] font-medium text-nexthria-cyan">Settings</span>
+        </button>
+      </div>
+    </div>
+    );
+  };
+
+  const renderProfile = () => {
+    const handleProfileUpdate = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!user || !userProfile) return;
+
+      try {
+        const updatedProfile: UserProfile = {
+          ...userProfile,
+          name: profileForm.name,
+          age: parseInt(profileForm.age),
+          gender: profileForm.gender,
+          specialization: profileForm.specialization
+        };
+        await saveUserProfile(updatedProfile);
+        alert('Profile updated successfully!');
+      } catch (error) {
+        console.error('Error updating profile:', error);
+        alert('Failed to update profile');
+      }
+    };
+
+    const userInitials = userProfile?.name ? userProfile.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'DR';
+
+    return (
+    <div className="flex flex-col h-full px-6 py-6 animate-fade-in max-w-md mx-auto w-full relative bg-nexthria-bg">
+      <div className="relative flex items-center justify-center mb-8">
+        <button 
+          onClick={() => setScreen(activeTab === 'settings' ? AppScreen.SETTINGS : AppScreen.DASHBOARD)}
+          className="absolute left-0 p-2 text-nexthria-text-secondary hover:text-white transition-colors"
+        >
+          <BackIcon />
+        </button>
+        <h2 className="text-xl font-bold text-white">My Profile</h2>
+      </div>
+
+      {/* Profile Avatar */}
+      <div className="flex flex-col items-center mb-8">
+        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-pink-500 to-rose-500 p-[2px] mb-4">
+          <div className="w-full h-full rounded-full bg-[#1F2937] flex items-center justify-center">
+            <span className="text-3xl font-bold text-white">{userInitials}</span>
+          </div>
+        </div>
+        <p className="text-nexthria-text-secondary text-sm">{userProfile?.email}</p>
+      </div>
+
+      {/* Profile Form */}
+      <form onSubmit={handleProfileUpdate} className="flex flex-col gap-5 flex-1">
+        <div>
+          <label className="block text-nexthria-text-secondary text-sm mb-2">Full Name</label>
+          <Input 
+            placeholder="Dr. John Doe" 
+            type="text" 
+            required 
+            value={profileForm.name}
+            onChange={(e) => setProfileForm({...profileForm, name: e.target.value})}
+          />
+        </div>
+        
+        <div>
+          <label className="block text-nexthria-text-secondary text-sm mb-2">Age</label>
+          <Input 
+            placeholder="35" 
+            type="number" 
+            required 
+            value={profileForm.age}
+            onChange={(e) => setProfileForm({...profileForm, age: e.target.value})}
+          />
+        </div>
+        
+        <div>
+          <label className="block text-nexthria-text-secondary text-sm mb-2">Gender</label>
+          <select
+            value={profileForm.gender}
+            onChange={(e) => setProfileForm({...profileForm, gender: e.target.value as 'Male' | 'Female' | 'Other'})}
+            className="w-full bg-[#1F2937] border border-transparent rounded-2xl py-4 px-5 text-white text-[15px] font-medium focus:outline-none focus:bg-[#263345] focus:border-nexthria-cyan/30 focus:ring-2 focus:ring-nexthria-cyan/10 transition-all duration-300"
+          >
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        
+        <div>
+          <label className="block text-nexthria-text-secondary text-sm mb-2">Specialization</label>
+          <Input 
+            placeholder="Ophthalmology" 
+            type="text" 
+            required 
+            value={profileForm.specialization}
+            onChange={(e) => setProfileForm({...profileForm, specialization: e.target.value})}
+          />
+        </div>
+
+        <div className="flex flex-col gap-3 mt-auto">
+          <Button type="submit">Save Changes</Button>
+          <Button 
+            type="button"
+            onClick={handleLogout}
+            variant="outline" 
+            className="border-red-500/50 text-red-400 hover:bg-red-500/10"
+          >
+            Logout
+          </Button>
+        </div>
+      </form>
+    </div>
+    );
+  };
+
+  const renderPatientProfile = () => {
+    if (!selectedPatient) return null;
+    
+    const initials = selectedPatient.name
+      .split(' ')
+      .map(n => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+    
+    return (
     <div className="flex flex-col h-full animate-fade-in relative bg-nexthria-bg w-full max-w-md mx-auto">
         {/* Header */}
         <div className="pt-6 pb-6 px-6 bg-gradient-to-b from-[#161B28] to-transparent">
@@ -341,11 +1008,12 @@ const App = () => {
             <div className="flex flex-col items-center">
                 <div className="w-24 h-24 rounded-full bg-gradient-to-br from-pink-500 to-rose-500 p-[2px] mb-4 shadow-xl">
                      <div className="w-full h-full rounded-full bg-[#1F2937] flex items-center justify-center">
-                        <span className="text-2xl font-bold text-white">SJ</span>
+                        <span className="text-2xl font-bold text-white">{initials}</span>
                      </div>
                 </div>
-                <h2 className="text-2xl font-bold text-white mb-1">Sarah Jenkins</h2>
-                <p className="text-nexthria-text-secondary font-medium">54 • Female</p>
+                <h2 className="text-2xl font-bold text-white mb-1">{selectedPatient.name}</h2>
+                <p className="text-nexthria-text-secondary font-medium">{selectedPatient.age} • {selectedPatient.gender}</p>
+                <p className="text-nexthria-text-tertiary text-xs mt-1">ID: {selectedPatient.id}</p>
             </div>
         </div>
 
@@ -369,68 +1037,63 @@ const App = () => {
             ))}
         </div>
 
-        {/* Content - Vitals */}
-        <div className="flex-1 overflow-y-auto px-6 pb-24">
-            {profileTab === 'vitals' && (
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-6 pb-32">
+            {profileTab === 'scans' && (
                 <div className="flex flex-col gap-4 animate-fade-in">
-                    {/* Metric 1 - HbA1c */}
-                    <div className="glass-card p-5 rounded-2xl flex items-center justify-between border-l-4 border-l-red-500">
-                        <div>
-                            <p className="text-nexthria-text-secondary text-xs uppercase tracking-wider font-semibold mb-1">HbA1c</p>
-                            <p className="text-2xl font-bold text-red-400">7.8%</p>
+                    {selectedPatient.scans && selectedPatient.scans.length > 0 ? (
+                      selectedPatient.scans.map((scan, index) => (
+                        <div key={index} className="glass-card p-5 rounded-2xl border-l-4 border-l-nexthria-cyan">
+                          <div className="flex justify-between items-start mb-3">
+                            <div>
+                              <p className="text-white font-semibold text-lg">{scan.finalGrade}</p>
+                              <p className="text-nexthria-text-tertiary text-xs">{scan.date}</p>
+                            </div>
+                          </div>
+                          <p className="text-nexthria-text-secondary text-sm">{scan.clinicianNotes}</p>
                         </div>
-                        <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center text-red-400">
-                            <WarningIcon />
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                         {/* Metric 2 - BP */}
-                        <div className="glass-card p-5 rounded-2xl">
-                             <p className="text-nexthria-text-secondary text-xs uppercase tracking-wider font-semibold mb-2">Blood Pressure</p>
-                             <p className="text-xl font-bold text-white">140/90</p>
-                             <p className="text-[10px] text-nexthria-text-tertiary mt-1">mmHg</p>
-                        </div>
-                        {/* Metric 3 - Diagnosed */}
-                        <div className="glass-card p-5 rounded-2xl">
-                             <p className="text-nexthria-text-secondary text-xs uppercase tracking-wider font-semibold mb-2">Diagnosed</p>
-                             <p className="text-xl font-bold text-white">12 Years</p>
-                             <p className="text-[10px] text-nexthria-text-tertiary mt-1">Type 2 Diabetes</p>
-                        </div>
-                    </div>
-
-                     {/* Extra styling for "Read Only" feel */}
-                     <div className="mt-4 p-4 rounded-xl border border-dashed border-white/10 bg-white/5">
-                        <p className="text-nexthria-text-tertiary text-xs text-center">
-                            Last updated from EMR: Today, 8:30 AM
-                        </p>
-                     </div>
+                      ))
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-40 text-nexthria-text-tertiary">
+                        <p>No scans available</p>
+                        <p className="text-xs mt-2">Upload a scan to get started</p>
+                      </div>
+                    )}
                 </div>
             )}
             
-            {/* Placeholders for other tabs */}
-            {profileTab !== 'vitals' && (
+            {profileTab === 'vitals' && (
                  <div className="flex flex-col items-center justify-center h-40 text-nexthria-text-tertiary animate-fade-in">
-                    <p>No data available</p>
+                    <p>No vitals data available</p>
+                 </div>
+            )}
+            
+            {profileTab === 'history' && (
+                 <div className="flex flex-col items-center justify-center h-40 text-nexthria-text-tertiary animate-fade-in">
+                    <p>No history data available</p>
                  </div>
             )}
         </div>
 
-        {/* EMR Sync Footer */}
+        {/* Upload Scan Button */}
         <div className="absolute bottom-6 left-6 right-6">
-            <button className="w-full py-4 rounded-2xl bg-[#1F2937] border border-white/10 text-nexthria-cyan font-semibold flex items-center justify-center gap-3 hover:bg-[#263345] transition-colors active:scale-[0.98]">
-                <CloudUploadIcon />
-                Sync to Hospital EMR
+            <button 
+              onClick={() => setScreen(AppScreen.UPLOAD)}
+              className="w-full py-4 rounded-2xl bg-gradient-to-r from-nexthria-cyan to-nexthria-blue text-white font-semibold flex items-center justify-center gap-3 hover:opacity-90 transition-all active:scale-[0.98] shadow-[0_0_20px_rgba(34,211,238,0.3)]"
+            >
+              <CameraIcon />
+              Upload Scan
             </button>
         </div>
     </div>
-  );
+    );
+  };
 
   const renderUpload = () => (
     <div className="flex flex-col h-full px-6 py-6 animate-fade-in max-w-md mx-auto w-full relative">
-       {/* Back Button for Upload screen to go back to Dashboard */}
+       {/* Back Button for Upload screen to go back to Patient Profile */}
       <button 
-          onClick={() => setScreen(AppScreen.DASHBOARD)}
+          onClick={() => setScreen(AppScreen.PATIENT_PROFILE)}
           className="absolute left-6 top-8 z-20 text-nexthria-text-secondary hover:text-white transition-colors"
         >
           <BackIcon />
@@ -872,6 +1535,10 @@ const App = () => {
         {screen === AppScreen.SPLASH && renderSplash()}
         {screen === AppScreen.LOGIN && renderLogin()}
         {screen === AppScreen.DASHBOARD && renderDashboard()}
+        {screen === AppScreen.PATIENTS && renderPatients()}
+        {screen === AppScreen.SETTINGS && renderSettings()}
+        {screen === AppScreen.PROFILE && renderProfile()}
+        {screen === AppScreen.ADD_PATIENT && renderAddPatient()}
         {screen === AppScreen.PATIENT_PROFILE && renderPatientProfile()}
         {screen === AppScreen.UPLOAD && renderUpload()}
         {screen === AppScreen.QUALITY_CHECK && renderQualityCheck()}

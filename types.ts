@@ -2,7 +2,11 @@ export enum AppScreen {
   SPLASH = 'SPLASH',
   LOGIN = 'LOGIN',
   DASHBOARD = 'DASHBOARD',
+  PATIENTS = 'PATIENTS',
+  SETTINGS = 'SETTINGS',
+  PROFILE = 'PROFILE',
   PATIENT_PROFILE = 'PATIENT_PROFILE',
+  ADD_PATIENT = 'ADD_PATIENT',
   UPLOAD = 'UPLOAD',
   QUALITY_CHECK = 'QUALITY_CHECK',
   REPORT = 'REPORT',
@@ -25,8 +29,21 @@ export interface AnalysisResult {
   regions?: Region[];
 }
 
-export interface PatientDetails {
+export interface Patient {
   id: string;
-  name: string; // Mocked
-  dob: string; // Mocked
+  name: string;
+  age: number;
+  gender: 'Male' | 'Female' | 'Other';
+  admittedDate: string;
+  scans?: AnalysisResult[];
+}
+
+export interface UserProfile {
+  uid: string;
+  name: string;
+  age: number;
+  gender: 'Male' | 'Female' | 'Other';
+  specialization: string;
+  email: string;
+  photoURL?: string;
 }
