@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
+        darkMode: 'class',
         theme: {
           extend: {
             colors: {
@@ -21,6 +22,16 @@
                   primary: '#FFFFFF',
                   secondary: '#94A3B8', // Slate-400
                   tertiary: '#64748B',  // Slate-500
+                }
+              },
+              light: {
+                bg: '#F8FAFC',        // Light Background
+                card: '#FFFFFF',      // Light Card Surface
+                input: '#F1F5F9',     // Light Input Fill
+                text: {
+                  primary: '#0F172A',
+                  secondary: '#475569',
+                  tertiary: '#64748B',
                 }
               }
             },
@@ -52,17 +63,22 @@
     </script>
     <style>
       body {
-        background-color: #0B0F19;
-        color: #FFFFFF;
         font-family: 'Inter', sans-serif;
         -webkit-font-smoothing: antialiased;
       }
-      /* Glassmorphism Utilities */
-      .glass-card {
+      /* Dark mode glassmorphism */
+      .dark .glass-card {
         background: rgba(30, 41, 59, 0.7);
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
         border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      /* Light mode glassmorphism */
+      .glass-card {
+        background: rgba(255, 255, 255, 0.8);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(0, 0, 0, 0.1);
       }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">

@@ -87,7 +87,11 @@ const App = () => {
 
   // User Profile & Settings
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    // Load theme from localStorage or default to dark
+    const saved = localStorage.getItem('theme');
+    return (saved === 'light' || saved === 'dark') ? saved : 'dark';
+  });
   const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'settings'>('dashboard');
   const [profileForm, setProfileForm] = useState({
     name: '',
@@ -105,6 +109,17 @@ const App = () => {
       return () => clearTimeout(timer);
     }
   }, [screen]);
+
+  // Theme Effect - Apply theme class to document and persist to localStorage
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   // Auth State Listener
   useEffect(() => {
@@ -744,11 +759,11 @@ const App = () => {
     const userInitials = userProfile?.name ? userProfile.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'DR';
 
     return (
-    <div className="flex flex-col h-full animate-fade-in relative bg-nexthria-bg w-full max-w-md mx-auto">
+    <div className={`flex flex-col h-full animate-fade-in relative w-full max-w-md mx-auto ${theme === 'dark' ? 'bg-nexthria-bg' : 'bg-light-bg'}`}>
       {/* Header */}
       <div className="px-6 pt-12 pb-6">
         <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-bold text-white">Settings</h2>
+          <h2 className={`text-2xl font-bold ${theme === 'dark' ? 'text-white' : 'text-light-text-primary'}`}>Settings</h2>
           <button 
             onClick={() => setScreen(AppScreen.PROFILE)}
             className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-500 to-rose-500 p-[2px]"
@@ -766,18 +781,28 @@ const App = () => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="text-nexthria-cyan">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                  </svg>
+                  {theme === 'dark' ? (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                  )}
                 </div>
                 <div>
-                  <p className="text-white font-medium">Dark Mode</p>
-                  <p className="text-nexthria-text-tertiary text-xs">Currently enabled</p>
+                  <p className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-light-text-primary'}`}>
+                    {theme === 'dark' ? 'Dark Mode' : 'Light Mode'}
+                  </p>
+                  <p className={`text-xs ${theme === 'dark' ? 'text-nexthria-text-tertiary' : 'text-light-text-tertiary'}`}>
+                    Currently {theme === 'dark' ? 'enabled' : 'active'}
+                  </p>
                 </div>
               </div>
               <button
                 onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                className={`relative w-12 h-6 rounded-full transition-colors ${theme === 'dark' ? 'bg-nexthria-cyan' : 'bg-gray-600'}`}
+                className={`relative w-12 h-6 rounded-full transition-colors ${theme === 'dark' ? 'bg-nexthria-cyan' : 'bg-gray-400'}`}
               >
                 <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${theme === 'dark' ? 'right-1' : 'left-1'}`} />
               </button>
@@ -787,7 +812,7 @@ const App = () => {
           {/* Profile Settings */}
           <button
             onClick={() => setScreen(AppScreen.PROFILE)}
-            className="glass-card p-5 rounded-2xl flex items-center justify-between hover:bg-white/5 transition-colors"
+            className={`glass-card p-5 rounded-2xl flex items-center justify-between transition-colors ${theme === 'dark' ? 'hover:bg-white/5' : 'hover:bg-black/5'}`}
           >
             <div className="flex items-center gap-3">
               <div className="text-nexthria-cyan">
@@ -796,8 +821,8 @@ const App = () => {
                 </svg>
               </div>
               <div className="text-left">
-                <p className="text-white font-medium">Profile Settings</p>
-                <p className="text-nexthria-text-tertiary text-xs">Update your information</p>
+                <p className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-light-text-primary'}`}>Profile Settings</p>
+                <p className={`text-xs ${theme === 'dark' ? 'text-nexthria-text-tertiary' : 'text-light-text-tertiary'}`}>Update your information</p>
               </div>
             </div>
             <ChevronRightIcon />
@@ -813,8 +838,8 @@ const App = () => {
                   </svg>
                 </div>
                 <div>
-                  <p className="text-white font-medium">Notifications</p>
-                  <p className="text-nexthria-text-tertiary text-xs">Push notifications</p>
+                  <p className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-light-text-primary'}`}>Notifications</p>
+                  <p className={`text-xs ${theme === 'dark' ? 'text-nexthria-text-tertiary' : 'text-light-text-tertiary'}`}>Push notifications</p>
                 </div>
               </div>
               <button className="relative w-12 h-6 rounded-full bg-gray-600">
@@ -832,8 +857,8 @@ const App = () => {
                 </svg>
               </div>
               <div>
-                <p className="text-white font-medium">About</p>
-                <p className="text-nexthria-text-tertiary text-xs">Version 1.0.0</p>
+                <p className={`font-medium ${theme === 'dark' ? 'text-white' : 'text-light-text-primary'}`}>About</p>
+                <p className={`text-xs ${theme === 'dark' ? 'text-nexthria-text-tertiary' : 'text-light-text-tertiary'}`}>Version 1.0.0</p>
               </div>
             </div>
           </div>
@@ -1530,7 +1555,11 @@ const App = () => {
   };
 
   return (
-    <div className="h-screen w-full bg-nexthria-bg text-white overflow-hidden font-sans selection:bg-nexthria-cyan/30 selection:text-white">
+    <div className={`h-screen w-full overflow-hidden font-sans transition-colors duration-300 ${
+      theme === 'dark' 
+        ? 'bg-nexthria-bg text-white selection:bg-nexthria-cyan/30 selection:text-white' 
+        : 'bg-light-bg text-light-text-primary selection:bg-nexthria-cyan/30 selection:text-nexthria-cyan'
+    }`}>
       <div className="h-full w-full">
         {screen === AppScreen.SPLASH && renderSplash()}
         {screen === AppScreen.LOGIN && renderLogin()}
