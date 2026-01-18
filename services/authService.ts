@@ -10,8 +10,10 @@ import {
 } from 'firebase/auth';
 import { auth } from '../config/firebase';
 
-// Google OAuth Provider
+// Google OAuth Provider with scopes
 const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope('profile');
+googleProvider.addScope('email');
 
 // Sign in with email and password
 export const loginWithEmail = async (email: string, password: string): Promise<UserCredential> => {

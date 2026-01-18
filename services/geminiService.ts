@@ -29,18 +29,17 @@ export const analyzeRetinalImage = async (
 
       Provide a "Final Grade" (e.g., "No DR", "Mild DR", "Moderate DR", "Severe DR", "Proliferative DR").
       
-      Provide "AI Reasoning": A comprehensive clinical assessment. Structure the response clearly with the following sections:
+      Provide "AI Reasoning" - CRITICAL: You MUST format the reasoning field EXACTLY as shown below. Do not use any other format.
       
-      **Key Findings:**
-      - List specific anomalies detected (e.g., count and location of microaneurysms).
-      - Note any hemorrhages, exudates, or cotton wool spots.
+      Format your response exactly as:
+      DESCRIPTION: [Write a professional 3-4 line explanation of this condition in simple terms that the patient can understand]
+      CAUSE: [Write 2-3 lines about potential causes that may have led to this stage of diabetic retinopathy]
+      REMEDY: [Write one line with the recommended next step or remedy]
       
-      **Severity Justification:**
-      - Explain why the findings map to the chosen grade based on clinical scales (e.g., ICDR).
-      
-      **Anatomical Context:**
-      - Comment on the status of the optic disc and macula.
-      - Note image quality or confounding factors if relevant.
+      Example format:
+      DESCRIPTION: This retinal scan shows signs of moderate diabetic retinopathy, a complication of diabetes affecting the blood vessels in the eye. The condition indicates damage to small blood vessels that can leak fluid or bleed, potentially affecting vision. Early detection and management are crucial to prevent progression to more severe stages.
+      CAUSE: This condition typically develops from prolonged high blood sugar levels damaging the retinal blood vessels. Poor glycemic control, hypertension, and duration of diabetes are major contributing factors.
+      REMEDY: Immediate referral to a retinal specialist for detailed evaluation and possible laser photocoagulation treatment is recommended.
 
       Provide "Clinician Notes": Technical medical notes under 30 words.
       
@@ -110,5 +109,25 @@ export const analyzeRetinalImage = async (
       notes: "Failed to analyze image.",
       regions: [],
     };
+  }
+};
+
+export const compareScans = async (prompt: string): Promise<string> => {
+  try {
+    const ai = getGeminiClient();
+    const modelId = "gemini-3-flash-preview";
+
+    const response = await ai.models.generateContent({
+      model: modelId,
+      contents: {
+        parts: [{ text: prompt }],
+      },
+    });
+
+    return response.text || "Unable to generate comparison";
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("Gemini Comparison Error:", errorMessage);
+    throw new Error(`Comparison failed: ${errorMessage}`);
   }
 };

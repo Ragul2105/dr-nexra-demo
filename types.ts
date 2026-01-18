@@ -11,6 +11,7 @@ export enum AppScreen {
   QUALITY_CHECK = 'QUALITY_CHECK',
   REPORT = 'REPORT',
   AI_REASONING = 'AI_REASONING',
+  COMPARISON = 'COMPARISON',
 }
 
 export interface Region {

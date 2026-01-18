@@ -65,12 +65,13 @@ const App = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [isComparing, setIsComparing] = useState(false);
   const [profileTab, setProfileTab] = useState<'scans' | 'vitals' | 'history'>('scans');
   const [user, setUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string>('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isGoogleLogin, setIsGoogleLogin] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Patient Management
@@ -93,6 +94,7 @@ const App = () => {
     return (saved === 'light' || saved === 'dark') ? saved : 'dark';
   });
   const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'settings'>('dashboard');
+  const [comparisonResult, setComparisonResult] = useState<string>('');
   const [profileForm, setProfileForm] = useState({
     name: '',
     age: '',
@@ -162,33 +164,49 @@ const App = () => {
       return;
     }
 
+    console.log('Setting up profile listener for user:', user.uid);
+    console.log('User auth data:', {
+      displayName: user.displayName,
+      email: user.email,
+      photoURL: user.photoURL
+    });
+
     // Set up real-time listener for user profile
     const unsubscribe = subscribeToUserProfile(user.uid, (profile) => {
+      console.log('Profile update received:', profile);
+      console.log('isGoogleLogin flag:', isGoogleLogin);
       if (profile) {
-        setUserProfile(profile);
-        setProfileForm({
-          name: profile.name || '',
-          age: profile.age?.toString() || '',
-          gender: profile.gender || 'Male',
-          specialization: profile.specialization || ''
-        });
-      } else {
-        // Create default profile if doesn't exist
+        // Don't overwrite if Google login is in progress
+        if (!isGoogleLogin) {
+          console.log('Updating local state with profile from Firestore');
+          setUserProfile(profile);
+          setProfileForm({
+            name: profile.name || '',
+            age: profile.age?.toString() || '',
+            gender: profile.gender || 'Male',
+            specialization: profile.specialization || ''
+          });
+        }
+      } else if (!isGoogleLogin) {
+        // Create default profile only if NOT a Google login (for email login)
+        console.log('No profile exists, creating default with user data');
         const defaultProfile: UserProfile = {
           uid: user.uid,
-          name: user.displayName || '',
+          name: user.displayName || 'User',
           age: 0,
           gender: 'Male',
           specialization: '',
-          email: user.email || ''
+          email: user.email || '',
+          photoURL: user.photoURL || undefined
         };
+        console.log('Creating default profile:', defaultProfile);
         setUserProfile(defaultProfile);
         saveUserProfile(defaultProfile);
       }
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isGoogleLogin]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -205,10 +223,52 @@ const App = () => {
   const handleGoogleLogin = async () => {
     try {
       setAuthError('');
-      await loginWithGoogle();
+      setIsGoogleLogin(true);
+      const userCredential = await loginWithGoogle();
+      const googleUser = userCredential.user;
+      
+      console.log('Google User Data:', {
+        displayName: googleUser.displayName,
+        email: googleUser.email,
+        photoURL: googleUser.photoURL,
+        uid: googleUser.uid
+      });
+      
+      // Always update profile with Google data immediately
+      if (googleUser) {
+        const existingProfile = await getUserProfile(googleUser.uid);
+        console.log('Existing profile:', existingProfile);
+        
+        const profile: UserProfile = {
+          uid: googleUser.uid,
+          name: googleUser.displayName || existingProfile?.name || 'User',
+          age: existingProfile?.age || 0,
+          gender: existingProfile?.gender || 'Male',
+          specialization: existingProfile?.specialization || '',
+          email: googleUser.email || existingProfile?.email || '',
+          photoURL: googleUser.photoURL || existingProfile?.photoURL || undefined
+        };
+        
+        console.log('Saving Google profile:', profile);
+        // Always save to update with latest Google data
+        await saveUserProfile(profile);
+        console.log('Google profile saved successfully');
+        
+        // Immediately update local state
+        setUserProfile(profile);
+        setProfileForm({
+          name: profile.name,
+          age: profile.age.toString(),
+          gender: profile.gender,
+          specialization: profile.specialization
+        });
+      }
+      setIsGoogleLogin(false);
       // Auth state listener will handle navigation
     } catch (error: any) {
+      console.error('Google login error:', error);
       setAuthError(error.message || 'Failed to sign in with Google');
+      setIsGoogleLogin(false);
     }
   };
 
@@ -351,6 +411,201 @@ const App = () => {
     fileInputRef.current?.click();
   };
 
+  const handleExportPDF = () => {
+    if (!analysisResult) {
+      alert('No analysis result to export');
+      return;
+    }
+    
+    // Create a printable HTML page for PDF export
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Please allow popups to export PDF');
+      return;
+    }
+    
+    const reportHTML = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>NexEye Report - ${selectedPatient?.id || 'Patient'}</title>
+  <style>
+    body { 
+      font-family: Arial, sans-serif; 
+      padding: 40px; 
+      color: #333; 
+      line-height: 1.6;
+    }
+    .header { 
+      border-bottom: 3px solid #22D3EE; 
+      padding-bottom: 20px; 
+      margin-bottom: 30px;
+    }
+    .header h1 { 
+      color: #22D3EE; 
+      margin: 0 0 10px 0;
+      font-size: 28px;
+    }
+    .section { 
+      margin: 25px 0; 
+      page-break-inside: avoid;
+    }
+    .section h2 { 
+      color: #1E293B; 
+      border-bottom: 2px solid #E5E7EB; 
+      padding-bottom: 8px;
+      font-size: 18px;
+    }
+    .info-grid { 
+      display: grid; 
+      grid-template-columns: 150px 1fr; 
+      gap: 10px; 
+      margin: 15px 0;
+    }
+    .label { 
+      font-weight: bold; 
+      color: #64748B;
+    }
+    .value { 
+      color: #1E293B;
+    }
+    .severity { 
+      background: #FEF3C7; 
+      border-left: 4px solid #F59E0B; 
+      padding: 15px; 
+      margin: 15px 0;
+      font-size: 20px;
+      font-weight: bold;
+    }
+    .reasoning { 
+      background: #F1F5F9; 
+      padding: 20px; 
+      border-radius: 8px; 
+      margin: 15px 0;
+      white-space: pre-wrap;
+    }
+    .footer { 
+      margin-top: 40px; 
+      padding-top: 20px; 
+      border-top: 2px solid #E5E7EB; 
+      font-size: 12px; 
+      color: #64748B;
+      text-align: center;
+    }
+    @media print {
+      body { padding: 20px; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🏥 NexEye AI Diagnostics Report</h1>
+    <p style="color: #64748B; margin: 5px 0;">Intelligent Retinal Analysis System</p>
+  </div>
+
+  <div class="section">
+    <h2>Patient Information</h2>
+    <div class="info-grid">
+      <div class="label">Patient ID:</div>
+      <div class="value">${selectedPatient?.id || 'N/A'}</div>
+      <div class="label">Patient Name:</div>
+      <div class="value">${selectedPatient?.name || 'N/A'}</div>
+      <div class="label">Age:</div>
+      <div class="value">${selectedPatient?.age || 'N/A'}</div>
+      <div class="label">Gender:</div>
+      <div class="value">${selectedPatient?.gender || 'N/A'}</div>
+      <div class="label">Report Date:</div>
+      <div class="value">${analysisResult.date}</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Diagnosis</h2>
+    <div class="severity">Severity Grade: ${analysisResult.finalGrade}</div>
+    <div class="info-grid">
+      <div class="label">Confidence:</div>
+      <div class="value">94%</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>AI Analysis Reasoning</h2>
+    <div class="reasoning">${analysisResult.reasoning}</div>
+  </div>
+
+  <div class="section">
+    <h2>Clinician Notes</h2>
+    <p>${analysisResult.clinicianNotes}</p>
+  </div>
+
+  <div class="footer">
+    <p><strong>DISCLAIMER:</strong> AI-generated insight. For clinical decision support only. 
+    Final diagnosis must be confirmed by a qualified professional.</p>
+    <p>Generated by NexEye AI Diagnostics System | ${new Date().toLocaleString()}</p>
+  </div>
+
+  <div class="no-print" style="margin-top: 30px; text-align: center;">
+    <button onclick="window.print()" style="padding: 12px 24px; background: #22D3EE; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px;">
+      Print / Save as PDF
+    </button>
+    <button onclick="window.close()" style="padding: 12px 24px; background: #64748B; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; margin-left: 10px;">
+      Close
+    </button>
+  </div>
+</body>
+</html>`;
+    
+    printWindow.document.write(reportHTML);
+    printWindow.document.close();
+  };
+
+  const handleComparePrevious = async () => {
+    if (!selectedPatient || !selectedPatient.scans || selectedPatient.scans.length < 2) {
+      alert('No previous scans available for comparison. At least 2 scans are required.');
+      return;
+    }
+    
+    setIsComparing(true);
+    
+    // Get the two most recent scans
+    const scans = selectedPatient.scans;
+    const latestScan = scans[scans.length - 1];
+    const previousScan = scans[scans.length - 2];
+    
+    // Use Gemini to compare the scans
+    try {
+      const comparisonPrompt = `You are an expert ophthalmologist analyzing changes in diabetic retinopathy progression. 
+      
+Compare these two retinal scan analyses:
+
+LATEST SCAN (${latestScan.date}):
+Grade: ${latestScan.finalGrade}
+Analysis: ${latestScan.reasoning}
+
+PREVIOUS SCAN (${previousScan.date}):
+Grade: ${previousScan.finalGrade}
+Analysis: ${previousScan.reasoning}
+
+Provide a comprehensive comparison analysis in the following format:
+
+PROGRESSION: [Describe whether the condition has improved, worsened, or remained stable in 2-3 lines]
+KEY CHANGES: [Highlight the specific changes between the two scans in 3-4 lines]
+RECOMMENDATION: [Provide clinical recommendations based on the progression in 2-3 lines]`;
+
+      const { compareScans } = await import('./services/geminiService');
+      const result = await compareScans(comparisonPrompt);
+      
+      setComparisonResult(result);
+      setScreen(AppScreen.COMPARISON);
+    } catch (error) {
+      console.error('Comparison error:', error);
+      alert('Failed to compare scans. Please try again.');
+    } finally {
+      setIsComparing(false);
+    }
+  };
+
   // --- RENDER FUNCTIONS ---
 
   const renderSplash = () => (
@@ -365,16 +620,18 @@ const App = () => {
   );
 
   const renderLogin = () => (
-    <div className="flex flex-col h-full px-6 pt-16 pb-10 animate-fade-in max-w-md mx-auto w-full relative">
+    <div className="flex flex-col justify-center min-h-full px-6 py-12 animate-fade-in max-w-md mx-auto w-full relative overflow-y-auto">
        <div className="absolute top-[-20%] left-[-20%] w-[140%] h-[50%] bg-gradient-to-b from-nexthria-blue/10 to-transparent blur-3xl pointer-events-none"></div>
 
-      <div className="flex flex-col items-center mb-10 relative z-10">
-        <Logo size="lg" className="mb-8" />
+      <div className="flex flex-col items-center mb-8 relative z-10">
+        <div className="mb-4">
+          <Logo size="lg" />
+        </div>
         <h2 className="text-3xl font-bold text-white mb-2">Welcome Back</h2>
         <p className="text-nexthria-text-tertiary">Sign in to access patient records</p>
       </div>
 
-      <form onSubmit={handleLogin} className="flex flex-col gap-5 w-full z-10">
+      <form onSubmit={handleLogin} className="flex flex-col gap-4 w-full z-10">
         {authError && (
           <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
             {authError}
@@ -404,7 +661,7 @@ const App = () => {
         <Button type="submit" className="mt-2">Sign In</Button>
       </form>
 
-      <div className="mt-6 flex flex-col items-center gap-6 z-10">
+      <div className="mt-6 flex flex-col items-center gap-5 z-10">
         <div className="flex items-center w-full gap-4">
           <div className="h-px bg-white/10 flex-1"></div>
           <span className="text-nexthria-text-tertiary text-sm font-medium">OR CONTINUE WITH</span>
@@ -415,17 +672,19 @@ const App = () => {
           fullWidth 
           onClick={(e) => { e.preventDefault(); handleGoogleLogin(); }}
         >
-          <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
-            <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-            <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-            <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-            <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-          </svg>
-          Continue with Google
+          <div className="flex items-center justify-center w-full">
+            <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
+              <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+              <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            <span>Continue with Google</span>
+          </div>
         </Button>
       </div>
 
-      <p className="mt-auto text-center text-[11px] text-nexthria-text-tertiary leading-relaxed px-4">
+      <p className="mt-8 text-center text-[11px] text-nexthria-text-tertiary leading-relaxed px-4">
         For Qualified Healthcare Professionals Only
       </p>
     </div>
@@ -935,8 +1194,16 @@ const App = () => {
       {/* Profile Avatar */}
       <div className="flex flex-col items-center mb-8">
         <div className="w-24 h-24 rounded-full bg-gradient-to-br from-pink-500 to-rose-500 p-[2px] mb-4">
-          <div className="w-full h-full rounded-full bg-[#1F2937] flex items-center justify-center">
-            <span className="text-3xl font-bold text-white">{userInitials}</span>
+          <div className="w-full h-full rounded-full bg-[#1F2937] flex items-center justify-center overflow-hidden">
+            {userProfile?.photoURL ? (
+              <img 
+                src={userProfile.photoURL} 
+                alt={userProfile.name} 
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <span className="text-3xl font-bold text-white">{userInitials}</span>
+            )}
           </div>
         </div>
         <p className="text-nexthria-text-secondary text-sm">{userProfile?.email}</p>
@@ -1195,80 +1462,74 @@ const App = () => {
   );
 
   const renderQualityCheck = () => (
-    <div className="flex flex-col h-full animate-fade-in relative bg-[#0B0F19]">
+    <div className="flex flex-col h-full px-6 py-6 animate-fade-in max-w-md mx-auto w-full relative">
        {/* Top Bar */}
-       <div className="px-6 pt-6 pb-2 z-20">
-         <div className="flex flex-col items-center mb-4">
+       <div className="flex flex-col items-center mb-6">
           <span className="text-xs font-semibold tracking-wider text-nexthria-text-secondary uppercase">Step 2 of 3 • Quality Check</span>
-          <div className="w-full h-1 bg-white/5 mt-4 rounded-full overflow-hidden max-w-md">
+          <div className="w-full h-1 bg-white/5 mt-4 rounded-full overflow-hidden">
             <div className="w-2/3 h-full bg-nexthria-cyan rounded-full shadow-[0_0_10px_rgba(34,211,238,0.5)]"></div>
+          </div>
+        </div>
+
+      {/* Main Preview Container */}
+      <div className="flex-1 relative w-full overflow-hidden rounded-3xl bg-black flex items-center justify-center mb-6">
+         {selectedImage && (
+           <img src={selectedImage} alt="Quality Check" className="w-full h-full object-cover" />
+         )}
+         
+         {/* Instruction Tooltip */}
+         <button className="absolute top-4 right-4 p-2 bg-black/40 hover:bg-black/60 backdrop-blur-md rounded-full text-white border border-white/10 transition-colors z-20">
+           <InfoIcon />
+         </button>
+      </div>
+
+      {/* Quality Analysis Card */}
+      <div className="glass-card rounded-2xl p-5 mb-6">
+        <h2 className="text-base font-bold text-white mb-4">Image Quality Analysis</h2>
+        
+        <div className="space-y-3 mb-6">
+          {/* List Item 1 */}
+          <div className="flex items-center gap-3">
+            <div className="p-1 rounded-full bg-emerald-500/10">
+              <CheckCircleIcon />
+            </div>
+            <span className="text-slate-200 text-sm">Focus: <span className="text-emerald-400 font-medium">Sharpness acceptable</span></span>
+          </div>
+
+          {/* List Item 2 */}
+          <div className="flex items-center gap-3">
+            <div className="p-1 rounded-full bg-emerald-500/10">
+              <CheckCircleIcon />
+            </div>
+            <span className="text-slate-200 text-sm">Exposure: <span className="text-emerald-400 font-medium">Balanced</span></span>
+          </div>
+
+          {/* List Item 3 */}
+          <div className="flex items-center gap-3">
+            <div className="p-1 rounded-full bg-amber-500/10">
+              <WarningIcon />
+            </div>
+            <span className="text-slate-200 text-sm">Centering: <span className="text-amber-400 font-medium">Slightly off-axis</span></span>
           </div>
         </div>
       </div>
 
-      {/* Main Preview with Full Coverage */}
-      <div className="flex-1 relative w-full h-full overflow-hidden bg-black flex items-center justify-center">
-         {selectedImage && (
-           <img src={selectedImage} alt="Quality Check" className="w-full h-full object-contain" />
-         )}
-         
-         {/* Instruction Tooltip */}
-         <button className="absolute top-6 right-6 p-2 bg-black/40 hover:bg-black/60 backdrop-blur-md rounded-full text-white border border-white/10 transition-colors z-20">
-           <InfoIcon />
-         </button>
-
-         {/* Quality Overlay (Glassmorphism Slide-Up) */}
-         <div className="absolute bottom-0 left-0 right-0 bg-slate-900/80 backdrop-blur-xl border-t border-white/10 rounded-t-[32px] p-6 pb-8 transition-transform animate-fade-in z-20">
-            <div className="max-w-md mx-auto">
-              <div className="w-12 h-1 bg-white/20 rounded-full mx-auto mb-6"></div>
-              
-              <h2 className="text-lg font-bold text-white mb-5">Image Quality Analysis</h2>
-              
-              <div className="space-y-4 mb-8">
-                {/* List Item 1 */}
-                <div className="flex items-center gap-3">
-                  <div className="p-1 rounded-full bg-emerald-500/10">
-                    <CheckCircleIcon />
-                  </div>
-                  <span className="text-slate-200 font-medium">Focus: <span className="text-emerald-400">Sharpness acceptable</span></span>
-                </div>
-
-                {/* List Item 2 */}
-                <div className="flex items-center gap-3">
-                  <div className="p-1 rounded-full bg-emerald-500/10">
-                    <CheckCircleIcon />
-                  </div>
-                  <span className="text-slate-200 font-medium">Exposure: <span className="text-emerald-400">Balanced</span></span>
-                </div>
-
-                {/* List Item 3 */}
-                <div className="flex items-center gap-3">
-                  <div className="p-1 rounded-full bg-amber-500/10">
-                    <WarningIcon />
-                  </div>
-                  <span className="text-slate-200 font-medium">Centering: <span className="text-amber-400">Slightly off-axis</span></span>
-                </div>
-              </div>
-
-              <div className="flex gap-4">
-                <Button 
-                  variant="outline" 
-                  onClick={() => setScreen(AppScreen.UPLOAD)}
-                  className="flex-1"
-                >
-                  Retake Photo
-                </Button>
-                <Button 
-                  variant="primary" 
-                  onClick={handleAnalyze} 
-                  disabled={isAnalyzing}
-                  className="flex-[2]"
-                >
-                  {isAnalyzing ? 'Analyzing...' : 'Confirm Quality'}
-                </Button>
-              </div>
-            </div>
-         </div>
+      <div className="flex gap-4">
+        <Button 
+          variant="outline" 
+          onClick={() => setScreen(AppScreen.UPLOAD)}
+          className="flex-1"
+        >
+          Retake Photo
+        </Button>
+        <Button 
+          variant="primary" 
+          onClick={handleAnalyze} 
+          disabled={isAnalyzing}
+          className="flex-[2]"
+        >
+          {isAnalyzing ? 'Analyzing...' : 'Confirm Quality'}
+        </Button>
       </div>
     </div>
   );
@@ -1369,100 +1630,29 @@ const App = () => {
     }
 
     return (
-        <div className="flex flex-col h-full px-6 py-6 animate-fade-in max-w-md mx-auto w-full overflow-y-auto">
-            {/* Header */}
-            <div className="flex flex-col items-center mb-6 relative">
-                 <button 
-                    onClick={() => setScreen(AppScreen.DASHBOARD)}
-                    className="absolute left-0 top-1 p-2 text-nexthria-text-secondary hover:text-white transition-colors"
-                >
-                    <BackIcon />
-                </button>
-                <h2 className="text-xl font-bold text-white">Analysis Result</h2>
-                <p className="text-nexthria-text-secondary text-sm font-medium mt-1">ID: P-4092 • Left Eye (OS)</p>
-            </div>
-
-            {/* Image Container with Heatmap */}
-            <div className="relative w-full rounded-xl overflow-hidden bg-black mb-6 shadow-2xl group border border-white/10">
-                 {selectedImage && (
-                    <img src={selectedImage} alt="Retinal Scan" className="w-full h-auto object-contain block" />
-                 )}
-                 
-                 {/* Dynamic SVG Overlay for Heatmap Regions */}
-                 <div className={`absolute inset-0 transition-opacity duration-500 pointer-events-none ${showHeatmap ? 'opacity-100' : 'opacity-0'}`}>
-                     <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                         {/* Tech Grid Background (Subtle) */}
-                         <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
-                             <path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(34, 211, 238, 0.1)" strokeWidth="0.5"/>
-                         </pattern>
-                         <rect width="100%" height="100%" fill="url(#grid)" />
-
-                         {/* Render Dynamic Regions */}
-                         {regions.map((region, index) => (
-                             <g key={index}>
-                                 {/* Blur Filter for Heatmap Glow Effect */}
-                                 <defs>
-                                     <filter id={`glow-${index}`} x="-50%" y="-50%" width="200%" height="200%">
-                                         <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                                         <feMerge>
-                                             <feMergeNode in="coloredBlur"/>
-                                             <feMergeNode in="SourceGraphic"/>
-                                         </feMerge>
-                                     </filter>
-                                 </defs>
-                                 
-                                 {/* The Region Rectangle */}
-                                 <rect 
-                                     x={region.xmin} 
-                                     y={region.ymin} 
-                                     width={region.xmax - region.xmin} 
-                                     height={region.ymax - region.ymin}
-                                     fill="rgba(34, 211, 238, 0.2)" 
-                                     stroke="#22D3EE" 
-                                     strokeWidth="0.5"
-                                     rx="2"
-                                     filter={`url(#glow-${index})`}
-                                     className="animate-pulse"
-                                 />
-                                 {/* Dashed Indicator Line */}
-                                 <line 
-                                     x1={region.xmax} 
-                                     y1={region.ymin} 
-                                     x2={region.xmax + 5} 
-                                     y2={region.ymin - 5} 
-                                     stroke="#22D3EE" 
-                                     strokeWidth="0.2" 
-                                 />
-                                 {/* Label */}
-                                 <text 
-                                    x={region.xmax + 6} 
-                                    y={region.ymin - 5} 
-                                    fill="#22D3EE" 
-                                    fontSize="3" 
-                                    fontWeight="bold"
-                                    className="uppercase tracking-widest"
-                                 >
-                                     {region.label}
-                                 </text>
-                             </g>
-                         ))}
-                     </svg>
-                 </div>
-
-                 {/* Toggle Switch */}
-                 <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/40 backdrop-blur-md rounded-full px-4 py-2 flex items-center gap-3 border border-white/10 z-10">
-                    <span className="text-xs font-medium text-white">AI Heatmap</span>
-                    <button 
-                        onClick={() => setShowHeatmap(!showHeatmap)}
-                        className={`w-10 h-5 rounded-full relative transition-colors duration-300 ${showHeatmap ? 'bg-nexthria-cyan' : 'bg-slate-600'}`}
+        <div className="flex flex-col h-full animate-fade-in max-w-md mx-auto w-full overflow-hidden">
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+                {/* Header */}
+                <div className="flex flex-col items-center mb-6 relative">
+                     <button 
+                        onClick={() => setScreen(AppScreen.DASHBOARD)}
+                        className="absolute left-0 top-1 p-2 text-nexthria-text-secondary hover:text-white transition-colors"
                     >
-                        <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-300 ${showHeatmap ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                        <BackIcon />
                     </button>
-                 </div>
-            </div>
+                    <h2 className="text-xl font-bold text-white">Analysis Result</h2>
+                    <p className="text-nexthria-text-secondary text-sm font-medium mt-1">ID: P-4092 • Left Eye (OS)</p>
+                </div>
 
-            {/* Confidence Card */}
-            <div className="glass-card rounded-2xl py-8 px-6 mb-6 flex items-center justify-between relative overflow-hidden">
+                {/* Image Container */}
+                <div className="relative w-full rounded-xl overflow-hidden bg-black mb-6 shadow-2xl border border-white/10 max-h-64">
+                     {selectedImage && (
+                        <img src={selectedImage} alt="Retinal Scan" className="w-full h-full object-cover block" />
+                     )}
+                </div>
+
+                {/* Confidence Card */}
+                <div className="glass-card rounded-2xl py-8 px-6 mb-6 flex items-center justify-between relative overflow-hidden">
                 {/* Background decorative glow for the card itself */}
                 <div className="absolute top-0 right-0 w-32 h-32 bg-nexthria-cyan/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
 
@@ -1519,38 +1709,207 @@ const App = () => {
                     </div>
                     <span className="text-[10px] text-nexthria-text-secondary mt-1 uppercase tracking-wider font-semibold">Confidence</span>
                 </div>
-            </div>
+                </div>
 
-            {/* AI Reasoning Button - Opens Separate Screen */}
-            <button 
-                onClick={() => setScreen(AppScreen.AI_REASONING)}
-                className="w-full glass-card rounded-2xl p-5 mb-6 flex items-center justify-between group hover:bg-white/5 transition-colors border border-white/10 text-left"
-            >
-                <div className="flex items-center gap-3">
+                {/* AI Reasoning Card - Inline Display */}
+                <div className="w-full glass-card rounded-2xl p-5 mb-6 border border-white/10">
+                <div className="flex items-center gap-3 mb-4 pb-4 border-b border-white/10">
                     <div className="p-1.5 rounded-lg bg-nexthria-cyan/10 text-nexthria-cyan shadow-[0_0_10px_rgba(34,211,238,0.2)]">
                         <SparklesIcon /> 
                     </div>
                     <div>
                         <span className="block font-semibold text-white text-sm tracking-wide">AI Analysis Reasoning</span>
-                        <span className="text-xs text-nexthria-text-tertiary">Tap to read full report</span>
+                        <span className="text-xs text-nexthria-text-tertiary">Clinical assessment report</span>
                     </div>
                 </div>
-                <div className="text-nexthria-text-tertiary group-hover:text-white transition-transform duration-300 group-hover:translate-x-1">
-                    <ChevronRightIcon />
+                
+                <div className="space-y-4 text-sm">
+                    {(() => {
+                        const reasoning = analysisResult?.reasoning || "";
+                        const descMatch = reasoning.match(/DESCRIPTION:\s*([^]*?)(?=CAUSE:|$)/i);
+                        const causeMatch = reasoning.match(/CAUSE:\s*([^]*?)(?=REMEDY:|$)/i);
+                        const remedyMatch = reasoning.match(/REMEDY:\s*([^]*?)$/i);
+                        
+                        return (
+                            <>
+                                {descMatch && (
+                                    <div>
+                                        <h4 className="text-white font-semibold mb-2 text-xs uppercase tracking-wider">Condition Overview</h4>
+                                        <p className="text-nexthria-text-secondary leading-relaxed">{descMatch[1].trim()}</p>
+                                    </div>
+                                )}
+                                {causeMatch && (
+                                    <div>
+                                        <h4 className="text-white font-semibold mb-2 text-xs uppercase tracking-wider">Potential Causes</h4>
+                                        <p className="text-nexthria-text-secondary leading-relaxed">{causeMatch[1].trim()}</p>
+                                    </div>
+                                )}
+                                {remedyMatch && (
+                                    <div>
+                                        <h4 className="text-white font-semibold mb-2 text-xs uppercase tracking-wider">Recommended Action</h4>
+                                        <p className="text-nexthria-cyan leading-relaxed font-medium">{remedyMatch[1].trim()}</p>
+                                    </div>
+                                )}
+                                {!descMatch && !causeMatch && !remedyMatch && reasoning && (
+                                    <p className="text-nexthria-text-secondary leading-relaxed">{reasoning}</p>
+                                )}
+                            </>
+                        );
+                    })()}
                 </div>
-            </button>
+                </div>
 
-            {/* Action Buttons */}
-            <div className="flex flex-col gap-3 mb-8">
-                <Button variant="primary">Export PDF Report</Button>
-                <Button variant="outline" className="border-nexthria-cyan/50 text-nexthria-cyan hover:bg-nexthria-cyan/10">Compare Previous</Button>
+                {/* Action Buttons */}
+                <div className="flex flex-col gap-3 mb-6">
+                    <Button variant="primary" onClick={handleExportPDF}>Export PDF Report</Button>
+                    <Button 
+                      variant="outline" 
+                      className="border-nexthria-cyan/50 text-nexthria-cyan hover:bg-nexthria-cyan/10" 
+                      onClick={handleComparePrevious}
+                      disabled={isComparing}
+                    >
+                      {isComparing ? (
+                        <div className="flex items-center justify-center gap-2">
+                          <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          <span>Analyzing...</span>
+                        </div>
+                      ) : (
+                        'Compare Previous'
+                      )}
+                    </Button>
+                </div>
+
+                {/* Legal Footer */}
+                <p className="text-center text-[11px] text-nexthria-text-tertiary leading-relaxed pb-4">
+                    AI-generated insight. For clinical decision support only. Final diagnosis must be confirmed by a qualified professional.
+                </p>
+            </div>
+        </div>
+    );
+  };
+
+  const renderComparison = () => {
+    if (!selectedPatient || !selectedPatient.scans || selectedPatient.scans.length < 2) {
+      return (
+        <div className="flex flex-col h-full px-6 py-6 animate-fade-in max-w-md mx-auto w-full">
+          <p className="text-white text-center">No comparison data available</p>
+        </div>
+      );
+    }
+
+    const scans = selectedPatient.scans;
+    const latestScan = scans[scans.length - 1];
+    const previousScan = scans[scans.length - 2];
+
+    return (
+      <div className="flex flex-col h-full animate-fade-in max-w-md mx-auto w-full overflow-hidden">
+        <div className="flex-1 overflow-y-auto px-6 py-6">
+          {/* Header */}
+          <div className="flex flex-col items-center mb-6 relative">
+            <button 
+              onClick={() => setScreen(AppScreen.REPORT)}
+              className="absolute left-0 top-1 p-2 text-nexthria-text-secondary hover:text-white transition-colors"
+            >
+              <BackIcon />
+            </button>
+            <h2 className="text-xl font-bold text-white">Scan Comparison</h2>
+            <p className="text-nexthria-text-secondary text-sm font-medium mt-1">Progress Analysis</p>
+          </div>
+
+          {/* Scan Comparison Cards */}
+          <div className="space-y-4 mb-6">
+            {/* Latest Scan */}
+            <div className="glass-card rounded-2xl p-5 border border-nexthria-cyan/30">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-white font-semibold">Latest Scan</h3>
+                <span className="text-xs text-nexthria-cyan font-medium">{latestScan.date}</span>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-nexthria-text-secondary text-sm">Grade:</span>
+                  <span className="text-white font-semibold">{latestScan.finalGrade}</span>
+                </div>
+              </div>
             </div>
 
-            {/* Legal Footer */}
-            <p className="mt-auto text-center text-[11px] text-nexthria-text-tertiary leading-relaxed">
-                AI-generated insight. For clinical decision support only. Final diagnosis must be confirmed by a qualified professional.
-            </p>
+            {/* Previous Scan */}
+            <div className="glass-card rounded-2xl p-5 border border-white/10">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-white font-semibold">Previous Scan</h3>
+                <span className="text-xs text-nexthria-text-secondary font-medium">{previousScan.date}</span>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-nexthria-text-secondary text-sm">Grade:</span>
+                  <span className="text-white font-semibold">{previousScan.finalGrade}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* AI Comparison Analysis */}
+          <div className="glass-card rounded-2xl p-5 mb-6 border border-white/10">
+            <div className="flex items-center gap-3 mb-4 pb-4 border-b border-white/10">
+              <div className="p-1.5 rounded-lg bg-nexthria-cyan/10 text-nexthria-cyan shadow-[0_0_10px_rgba(34,211,238,0.2)]">
+                <SparklesIcon />
+              </div>
+              <div>
+                <span className="block font-semibold text-white text-sm tracking-wide">AI Comparison Analysis</span>
+                <span className="text-xs text-nexthria-text-tertiary">Progression assessment</span>
+              </div>
+            </div>
+
+            <div className="space-y-4 text-sm">
+              {(() => {
+                const progressionMatch = comparisonResult.match(/PROGRESSION:\s*([^]*?)(?=KEY CHANGES:|$)/i);
+                const changesMatch = comparisonResult.match(/KEY CHANGES:\s*([^]*?)(?=RECOMMENDATION:|$)/i);
+                const recommendationMatch = comparisonResult.match(/RECOMMENDATION:\s*([^]*?)$/i);
+
+                return (
+                  <>
+                    {progressionMatch && (
+                      <div>
+                        <h4 className="text-white font-semibold mb-2 text-xs uppercase tracking-wider">Progression Status</h4>
+                        <p className="text-nexthria-text-secondary leading-relaxed">{progressionMatch[1].trim()}</p>
+                      </div>
+                    )}
+                    {changesMatch && (
+                      <div>
+                        <h4 className="text-white font-semibold mb-2 text-xs uppercase tracking-wider">Key Changes</h4>
+                        <p className="text-nexthria-text-secondary leading-relaxed">{changesMatch[1].trim()}</p>
+                      </div>
+                    )}
+                    {recommendationMatch && (
+                      <div>
+                        <h4 className="text-white font-semibold mb-2 text-xs uppercase tracking-wider">Clinical Recommendation</h4>
+                        <p className="text-nexthria-cyan leading-relaxed font-medium">{recommendationMatch[1].trim()}</p>
+                      </div>
+                    )}
+                    {!progressionMatch && !changesMatch && !recommendationMatch && comparisonResult && (
+                      <p className="text-nexthria-text-secondary leading-relaxed">{comparisonResult}</p>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Action Button */}
+          <div className="mb-6">
+            <Button variant="primary" onClick={() => setScreen(AppScreen.REPORT)}>
+              Back to Report
+            </Button>
+          </div>
+
+          {/* Legal Footer */}
+          <p className="text-center text-[11px] text-nexthria-text-tertiary leading-relaxed pb-4">
+            AI-generated comparison. For clinical decision support only.
+          </p>
         </div>
+      </div>
     );
   };
 
@@ -1573,6 +1932,7 @@ const App = () => {
         {screen === AppScreen.QUALITY_CHECK && renderQualityCheck()}
         {screen === AppScreen.REPORT && renderReport()}
         {screen === AppScreen.AI_REASONING && renderAIReasoning()}
+        {screen === AppScreen.COMPARISON && renderComparison()}
       </div>
     </div>
   );
