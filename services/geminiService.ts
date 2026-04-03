@@ -48,56 +48,65 @@ export const analyzeRetinalImage = async (
       For example, ymin=0 is top, ymax=100 is bottom.
     `;
 
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: mimeType, 
-              data: base64Image,
-            },
-          },
-          {
-            text: prompt,
-          },
-        ],
-      },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            grade: { type: Type.STRING, description: "The severity grade of the diagnosis." },
-            reasoning: { type: Type.STRING, description: "Comprehensive, structured AI reasoning report." },
-            notes: { type: Type.STRING, description: "Technical clinician notes." },
-            regions: {
-              type: Type.ARRAY,
-              description: "List of identified regions of interest.",
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  label: { type: Type.STRING, description: "Type of anomaly (e.g., 'Microaneurysm')" },
-                  ymin: { type: Type.NUMBER, description: "Top coordinate (0-100)" },
-                  xmin: { type: Type.NUMBER, description: "Left coordinate (0-100)" },
-                  ymax: { type: Type.NUMBER, description: "Bottom coordinate (0-100)" },
-                  xmax: { type: Type.NUMBER, description: "Right coordinate (0-100)" },
-                },
-                required: ["label", "ymin", "xmin", "ymax", "xmax"],
-              },
-            },
-          },
-          required: ["grade", "reasoning", "notes", "regions"],
-        },
-      },
-    });
+    // COMMENTED OUT - Gemini API call temporarily disabled
+    // const response = await ai.models.generateContent({
+    //   model: modelId,
+    //   contents: {
+    //     parts: [
+    //       {
+    //         inlineData: {
+    //           mimeType: mimeType, 
+    //           data: base64Image,
+    //         },
+    //       },
+    //       {
+    //         text: prompt,
+    //       },
+    //     ],
+    //   },
+    //   config: {
+    //     responseMimeType: "application/json",
+    //     responseSchema: {
+    //       type: Type.OBJECT,
+    //       properties: {
+    //         grade: { type: Type.STRING, description: "The severity grade of the diagnosis." },
+    //         reasoning: { type: Type.STRING, description: "Comprehensive, structured AI reasoning report." },
+    //         notes: { type: Type.STRING, description: "Technical clinician notes." },
+    //         regions: {
+    //           type: Type.ARRAY,
+    //           description: "List of identified regions of interest.",
+    //           items: {
+    //             type: Type.OBJECT,
+    //             properties: {
+    //               label: { type: Type.STRING, description: "Type of anomaly (e.g., 'Microaneurysm')" },
+    //               ymin: { type: Type.NUMBER, description: "Top coordinate (0-100)" },
+    //               xmin: { type: Type.NUMBER, description: "Left coordinate (0-100)" },
+    //               ymax: { type: Type.NUMBER, description: "Bottom coordinate (0-100)" },
+    //               xmax: { type: Type.NUMBER, description: "Right coordinate (0-100)" },
+    //             },
+    //             required: ["label", "ymin", "xmin", "ymax", "xmax"],
+    //           },
+    //         },
+    //       },
+    //       required: ["grade", "reasoning", "notes", "regions"],
+    //     },
+    //   },
+    // });
 
-    const jsonText = response.text;
-    if (!jsonText) {
-      throw new Error("No response from Gemini");
-    }
+    // const jsonText = response.text;
+    // if (!jsonText) {
+    //   throw new Error("No response from Gemini");
+    // }
 
-    return JSON.parse(jsonText);
+    // return JSON.parse(jsonText);
+    
+    // Temporary mock response while Gemini is disabled
+    return {
+      grade: "Analysis Disabled",
+      reasoning: "DESCRIPTION: Gemini AI analysis is temporarily disabled.\nCAUSE: API calls have been commented out for testing purposes.\nREMEDY: Uncomment the generateContent calls in geminiService.ts to re-enable AI analysis.",
+      notes: "Gemini API temporarily disabled",
+      regions: [],
+    };
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -117,14 +126,18 @@ export const compareScans = async (prompt: string): Promise<string> => {
     const ai = getGeminiClient();
     const modelId = "gemini-3-flash-preview";
 
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: {
-        parts: [{ text: prompt }],
-      },
-    });
+    // COMMENTED OUT - Gemini API call temporarily disabled
+    // const response = await ai.models.generateContent({
+    //   model: modelId,
+    //   contents: {
+    //     parts: [{ text: prompt }],
+    //   },
+    // });
 
-    return response.text || "Unable to generate comparison";
+    // return response.text || "Unable to generate comparison";
+    
+    // Temporary mock response while Gemini is disabled
+    return "Scan comparison is temporarily disabled. Gemini API calls have been commented out.";
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error("Gemini Comparison Error:", errorMessage);
